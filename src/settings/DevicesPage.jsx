@@ -164,6 +164,14 @@ const DevicesPage = () => {
               <Button onClick={handleExport} variant="text">
                 {t('reportExport')}
               </Button>
+              <Button
+                variant="text"
+                component="a"
+                href="/override/downloads/traccar-client.apk"
+                download
+              >
+                {t('deviceDownloadClient')}
+              </Button>
             </TableCell>
             <TableCell colSpan={manager ? 9 : 8} align="right">
               <FormControlLabel
