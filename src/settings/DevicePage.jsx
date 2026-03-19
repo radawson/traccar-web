@@ -153,7 +153,12 @@ const DevicePage = () => {
                 label={t('sharedDisabled')}
                 disabled={!admin}
               />
-              <Button variant="outlined" color="primary" onClick={() => setShowQr(true)}>
+              <Button
+                variant="outlined"
+                color="primary"
+                onClick={() => setShowQr(true)}
+                disabled={!item.uniqueId}
+              >
                 {t('sharedQrCode')}
               </Button>
             </AccordionDetails>
@@ -180,7 +185,7 @@ const DevicePage = () => {
           />
         </>
       )}
-      <QrCodeDialog open={showQr} onClose={() => setShowQr(false)} />
+      <QrCodeDialog open={showQr} onClose={() => setShowQr(false)} device={item} />
     </EditItemView>
   );
 };

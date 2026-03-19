@@ -16,6 +16,10 @@ import {
 import fetchOrThrow from './common/util/fetchOrThrow';
 
 const logoutCode = 4000;
+const reconnectInitialDelayMs = 2000;
+const reconnectMaxDelayMs = 60000;
+const reconnectJitterRatio = 0.2;
+const heartbeatIntervalMs = 60000;
 
 const SocketController = () => {
   const dispatch = useDispatch();
@@ -26,12 +30,33 @@ const SocketController = () => {
 
   const socketRef = useRef();
   const reconnectTimeoutRef = useRef();
+  const heartbeatIntervalRef = useRef();
+  const reconnectAttemptRef = useRef(0);
 
   const clearReconnectTimeout = () => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+  };
+
+  const clearHeartbeatInterval = () => {
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+  };
+
+  const scheduleReconnect = () => {
+    clearReconnectTimeout();
+    const attempt = reconnectAttemptRef.current;
+    const baseDelay = Math.min(reconnectMaxDelayMs, reconnectInitialDelayMs * 2 ** attempt);
+    const jitter = Math.floor(baseDelay * reconnectJitterRatio * Math.random());
+    reconnectAttemptRef.current += 1;
+    reconnectTimeoutRef.current = setTimeout(() => {
+      reconnectTimeoutRef.current = null;
+      connectSocket();
+    }, baseDelay + jitter);
   };
 
   const [notifications, setNotifications] = useState([]);
@@ -76,11 +101,21 @@ const SocketController = () => {
     socketRef.current = socket;
 
     socket.onopen = () => {
+      reconnectAttemptRef.current = 0;
       dispatch(sessionActions.updateSocket(true));
+      clearHeartbeatInterval();
+      heartbeatIntervalRef.current = setInterval(() => {
+        try {
+          socket.send('{}');
+        } catch {
+          // ignore heartbeat send errors
+        }
+      }, heartbeatIntervalMs);
     };
 
     socket.onclose = async (event) => {
       dispatch(sessionActions.updateSocket(false));
+      clearHeartbeatInterval();
       if (event.code !== logoutCode) {
         try {
           const devicesResponse = await fetch('/api/devices');
@@ -97,16 +132,17 @@ const SocketController = () => {
         } catch {
           // ignore errors
         }
-        clearReconnectTimeout();
-        reconnectTimeoutRef.current = setTimeout(() => {
-          reconnectTimeoutRef.current = null;
-          connectSocket();
-        }, 60000);
+        scheduleReconnect();
       }
     };
 
     socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
       if (data.devices) {
         dispatch(devicesActions.update(data.devices));
       }
@@ -123,7 +159,9 @@ const SocketController = () => {
   };
 
   useEffect(() => {
-    socketRef.current?.send(JSON.stringify({ logs: includeLogs }));
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ logs: includeLogs }));
+    }
   }, [includeLogs]);
 
   useEffectAsync(async () => {
@@ -134,6 +172,7 @@ const SocketController = () => {
       connectSocket();
       return () => {
         clearReconnectTimeout();
+        clearHeartbeatInterval();
         socketRef.current?.close(logoutCode);
       };
     }
