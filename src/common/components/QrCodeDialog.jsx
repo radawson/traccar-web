@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -48,8 +48,19 @@ const QrCodeDialog = ({ open, onClose, device }) => {
   const [serverUrl, setServerUrl] = useState(window.location.origin);
   const [queryParams, setQueryParams] = useState('');
   const [tokenError, setTokenError] = useState('');
+  const serverUrlRef = useRef(serverUrl);
 
-  const fetchWebSocketToken = async () => {
+  const serverUrlValid = useMemo(() => {
+    try {
+      // Accept only absolute http/https URLs for predictable QR payloads.
+      const parsed = new URL(serverUrl);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  }, [serverUrl]);
+
+  const fetchWebSocketToken = useCallback(async () => {
     setTokenError('');
     try {
       const expiration = new Date(Date.now() + defaultTokenTtlMs).toISOString();
@@ -67,9 +78,13 @@ const QrCodeDialog = ({ open, onClose, device }) => {
         return previousParams.toString();
       });
     } catch {
-      setTokenError('Failed to generate websocket token');
+      setTokenError(t('commandQrTokenError'));
     }
-  };
+  }, [t]);
+
+  useEffect(() => {
+    serverUrlRef.current = serverUrl;
+  }, [serverUrl]);
 
   useEffect(() => {
     if (!open) {
@@ -79,7 +94,7 @@ const QrCodeDialog = ({ open, onClose, device }) => {
     if (device?.uniqueId) {
       params.set('id', device.uniqueId);
     }
-    const websocketUrl = buildCommandSocketUrl(serverUrl);
+    const websocketUrl = buildCommandSocketUrl(serverUrlRef.current);
     if (websocketUrl) {
       params.set('websocket_url', websocketUrl);
     }
@@ -88,7 +103,7 @@ const QrCodeDialog = ({ open, onClose, device }) => {
     params.set('use_fcm_fallback', 'true');
     setQueryParams(params.toString());
     fetchWebSocketToken();
-  }, [open, serverUrl, device?.uniqueId]);
+  }, [open, device?.uniqueId, fetchWebSocketToken]);
 
   const mergedQuery = useMemo(() => {
     const defaults = new URLSearchParams();
@@ -110,7 +125,7 @@ const QrCodeDialog = ({ open, onClose, device }) => {
     return defaults.toString();
   }, [serverUrl, device?.uniqueId, queryParams]);
 
-  const fullUrl = buildQrUrl(serverUrl, mergedQuery);
+  const fullUrl = serverUrlValid ? buildQrUrl(serverUrl, mergedQuery) : '';
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
@@ -125,6 +140,8 @@ const QrCodeDialog = ({ open, onClose, device }) => {
           onChange={(e) => setServerUrl(e.target.value)}
           margin="dense"
           fullWidth
+          error={!serverUrlValid}
+          helperText={!serverUrlValid ? t('commandQrInvalidServerUrl') : undefined}
         />
 
         <TextField
@@ -133,13 +150,13 @@ const QrCodeDialog = ({ open, onClose, device }) => {
           onChange={(e) => setQueryParams(e.target.value)}
           margin="dense"
           fullWidth
-          helperText="Query params merged into QR payload"
+          helperText={t('commandQrMergedHelp')}
         />
         {tokenError && <Alert severity="warning">{tokenError}</Alert>}
       </DialogContent>
 
       <DialogActions>
-        <Button onClick={fetchWebSocketToken}>Refresh token</Button>
+        <Button onClick={fetchWebSocketToken}>{t('commandQrRefreshToken')}</Button>
         <Button onClick={onClose}>{t('sharedCancel')}</Button>
       </DialogActions>
     </Dialog>

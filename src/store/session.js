@@ -6,6 +6,7 @@ const { reducer, actions } = createSlice({
     server: null,
     user: null,
     socket: null,
+    socketDiagnostics: [],
     includeLogs: false,
     logs: [],
     positions: {},
@@ -20,6 +21,15 @@ const { reducer, actions } = createSlice({
     },
     updateSocket(state, action) {
       state.socket = action.payload;
+    },
+    addSocketDiagnostic(state, action) {
+      state.socketDiagnostics.push({
+        timestamp: new Date().toISOString(),
+        ...action.payload,
+      });
+      if (state.socketDiagnostics.length > 100) {
+        state.socketDiagnostics = state.socketDiagnostics.slice(-100);
+      }
     },
     enableLogs(state, action) {
       state.includeLogs = action.payload;

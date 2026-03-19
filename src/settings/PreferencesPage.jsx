@@ -66,6 +66,14 @@ const PreferencesPage = () => {
   const versionApp = import.meta.env.VITE_APP_VERSION;
   const versionServer = useSelector((state) => state.session.server.version);
   const socket = useSelector((state) => state.session.socket);
+  const socketDiagnostics = useSelector((state) => state.session.socketDiagnostics || []);
+  const latestSocketEvent = socketDiagnostics.at(-1);
+  const latestSocketCloseEvent = [...socketDiagnostics]
+    .reverse()
+    .find((event) => event.type === 'socket_close');
+  const latestSocketReconnectEvent = [...socketDiagnostics]
+    .reverse()
+    .find((event) => event.type === 'socket_reconnect_scheduled');
 
   const [token, setToken] = useState(null);
   const [tokenExpiration, setTokenExpiration] = useState(
@@ -423,6 +431,26 @@ const PreferencesPage = () => {
                 <TextField
                   value={socket ? t('deviceStatusOnline') : t('deviceStatusOffline')}
                   label={t('settingsConnection')}
+                  disabled
+                />
+                <TextField
+                  value={latestSocketEvent?.type || '-'}
+                  label={t('settingsSocketLastEvent')}
+                  disabled
+                />
+                <TextField
+                  value={latestSocketEvent?.timestamp || '-'}
+                  label={t('settingsSocketLastEventTime')}
+                  disabled
+                />
+                <TextField
+                  value={latestSocketCloseEvent?.code ?? '-'}
+                  label={t('settingsSocketLastCloseCode')}
+                  disabled
+                />
+                <TextField
+                  value={latestSocketReconnectEvent?.delay ?? '-'}
+                  label={t('settingsSocketLastReconnectDelayMs')}
                   disabled
                 />
                 <Button variant="outlined" color="primary" onClick={() => navigate('/emulator')}>

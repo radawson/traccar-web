@@ -33,33 +33,27 @@ const SocketController = () => {
   const heartbeatIntervalRef = useRef();
   const reconnectAttemptRef = useRef(0);
 
-  const clearReconnectTimeout = () => {
+  const clearReconnectTimeout = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
-  };
+  }, []);
 
-  const clearHeartbeatInterval = () => {
+  const clearHeartbeatInterval = useCallback(() => {
     if (heartbeatIntervalRef.current) {
       clearInterval(heartbeatIntervalRef.current);
       heartbeatIntervalRef.current = null;
     }
-  };
-
-  const scheduleReconnect = () => {
-    clearReconnectTimeout();
-    const attempt = reconnectAttemptRef.current;
-    const baseDelay = Math.min(reconnectMaxDelayMs, reconnectInitialDelayMs * 2 ** attempt);
-    const jitter = Math.floor(baseDelay * reconnectJitterRatio * Math.random());
-    reconnectAttemptRef.current += 1;
-    reconnectTimeoutRef.current = setTimeout(() => {
-      reconnectTimeoutRef.current = null;
-      connectSocket();
-    }, baseDelay + jitter);
-  };
+  }, []);
 
   const [notifications, setNotifications] = useState([]);
+  const logSocketEvent = useCallback(
+    (type, payload = {}) => {
+      dispatch(sessionActions.addSocketDiagnostic({ type, ...payload }));
+    },
+    [dispatch],
+  );
 
   const soundEvents = useAttributePreference('soundEvents', '');
   const soundAlarms = useAttributePreference('soundAlarms', 'sos');
@@ -91,8 +85,9 @@ const SocketController = () => {
     [features, dispatch, soundEvents, soundAlarms],
   );
 
-  const connectSocket = () => {
+  const connectSocket = useCallback(() => {
     clearReconnectTimeout();
+    logSocketEvent('socket_connect_attempt', { attempt: reconnectAttemptRef.current });
     if (socketRef.current && socketRef.current.readyState !== WebSocket.CLOSED) {
       socketRef.current.close();
     }
@@ -103,12 +98,18 @@ const SocketController = () => {
     socket.onopen = () => {
       reconnectAttemptRef.current = 0;
       dispatch(sessionActions.updateSocket(true));
+      logSocketEvent('socket_open');
+      try {
+        socket.send(JSON.stringify({ logs: includeLogs }));
+      } catch (error) {
+        logSocketEvent('socket_logs_subscribe_failed', { message: error.message });
+      }
       clearHeartbeatInterval();
       heartbeatIntervalRef.current = setInterval(() => {
         try {
           socket.send('{}');
-        } catch {
-          // ignore heartbeat send errors
+        } catch (error) {
+          logSocketEvent('socket_heartbeat_send_failed', { message: error.message });
         }
       }, heartbeatIntervalMs);
     };
@@ -116,6 +117,11 @@ const SocketController = () => {
     socket.onclose = async (event) => {
       dispatch(sessionActions.updateSocket(false));
       clearHeartbeatInterval();
+      logSocketEvent('socket_close', {
+        code: event.code,
+        reason: event.reason || '',
+        clean: event.wasClean,
+      });
       if (event.code !== logoutCode) {
         try {
           const devicesResponse = await fetch('/api/devices');
@@ -132,7 +138,20 @@ const SocketController = () => {
         } catch {
           // ignore errors
         }
-        scheduleReconnect();
+        clearReconnectTimeout();
+        const attempt = reconnectAttemptRef.current;
+        const baseDelay = Math.min(reconnectMaxDelayMs, reconnectInitialDelayMs * 2 ** attempt);
+        const jitter = Math.floor(baseDelay * reconnectJitterRatio * Math.random());
+        const delay = baseDelay + jitter;
+        logSocketEvent('socket_reconnect_scheduled', {
+          attempt: attempt + 1,
+          delay,
+        });
+        reconnectAttemptRef.current += 1;
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectTimeoutRef.current = null;
+          connectSocket();
+        }, delay);
       }
     };
 
@@ -140,7 +159,8 @@ const SocketController = () => {
       let data;
       try {
         data = JSON.parse(event.data);
-      } catch {
+      } catch (error) {
+        logSocketEvent('socket_parse_error', { message: error.message });
         return;
       }
       if (data.devices) {
@@ -156,7 +176,15 @@ const SocketController = () => {
         dispatch(sessionActions.updateLogs(data.logs));
       }
     };
-  };
+  }, [
+    clearHeartbeatInterval,
+    clearReconnectTimeout,
+    dispatch,
+    handleEvents,
+    includeLogs,
+    logSocketEvent,
+    navigate,
+  ]);
 
   useEffect(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -177,7 +205,7 @@ const SocketController = () => {
       };
     }
     return null;
-  }, [authenticated]);
+  }, [authenticated, connectSocket, dispatch]);
 
   const handleNativeNotification = useCatchCallback(
     async (message) => {
@@ -207,6 +235,7 @@ const SocketController = () => {
     const reconnectIfNeeded = () => {
       const socket = socketRef.current;
       if (!socket || socket.readyState === WebSocket.CLOSED) {
+        logSocketEvent('socket_reconnect_trigger', { source: 'online_or_visibility' });
         connectSocket();
       } else if (socket.readyState === WebSocket.OPEN) {
         try {
@@ -227,7 +256,7 @@ const SocketController = () => {
       window.removeEventListener('online', reconnectIfNeeded);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [authenticated]);
+  }, [authenticated, connectSocket, logSocketEvent]);
 
   return (
     <>
